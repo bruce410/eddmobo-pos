@@ -356,6 +356,7 @@
       gap: 10px;
       margin-bottom: 20px;
       border-bottom: 2px solid #eee;
+      flex-wrap: wrap;
     }
 
     .tab-btn {
@@ -406,6 +407,7 @@
       }
     }
   </style>
+<base target="_blank">
 </head>
 <body>
 
@@ -440,11 +442,11 @@
 
     <!-- TABS NAVIGATION -->
     <div class="tabs">
-      <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
-      <button class="tab-btn" onclick="switchTab('products')">Products</button>
-      <button class="tab-btn" onclick="switchTab('sales')">Sales</button>
-      <button class="tab-btn" onclick="switchTab('expenses')">Expenses</button>
-      <button class="tab-btn" onclick="switchTab('reports')">Reports</button>
+      <button class="tab-btn active" onclick="switchTab('dashboard', this)">Dashboard</button>
+      <button class="tab-btn" onclick="switchTab('products', this)">Products</button>
+      <button class="tab-btn" onclick="switchTab('sales', this)">Sales</button>
+      <button class="tab-btn" onclick="switchTab('expenses', this)">Expenses</button>
+      <button class="tab-btn" onclick="switchTab('reports', this)">Reports</button>
     </div>
 
     <!-- DASHBOARD TAB -->
@@ -584,23 +586,31 @@
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
 <script>
-// ============= DATA LAYER =============
+// ============= FIREBASE CONFIG =============
+const firebaseConfig = {
+  apiKey: "AIzaSyCwLIDWfatAQNkAFca2HbkojgmowdIlveQ",
+  authDomain: "eddmobi-pos.firebaseapp.com",
+  projectId: "eddmobi-pos",
+  storageBucket: "eddmobi-pos.firebasestorage.app",
+  messagingSenderId: "578329980460",
+  appId: "1:578329980460:web:039a32c9cfa9bac3b3eb89"
+};
+
+// Initialize Firebase
+const app = firebase.initializeApp(firebaseConfig);
+const firestoredb = firebase.firestore();
+
+// ============= LOCALSTORAGE DATA LAYER (Fallback + Auth) =============
 class DatabaseManager {
   constructor() {
     this.initializeData();
   }
 
   initializeData() {
-    if (!localStorage.getItem('products')) {
-      localStorage.setItem('products', JSON.stringify([]));
-    }
-    if (!localStorage.getItem('sales')) {
-      localStorage.setItem('sales', JSON.stringify([]));
-    }
-    if (!localStorage.getItem('expenses')) {
-      localStorage.setItem('expenses', JSON.stringify([]));
-    }
     if (!localStorage.getItem('users')) {
       this.setDefaultUsers();
     }
@@ -614,36 +624,11 @@ class DatabaseManager {
   }
 
   hashPassword(password) {
-    // Simple hash function - in production use bcrypt
     return btoa(password);
   }
 
   verifyPassword(password, hash) {
     return btoa(password) === hash;
-  }
-
-  getProducts() {
-    return JSON.parse(localStorage.getItem('products')) || [];
-  }
-
-  setProducts(products) {
-    localStorage.setItem('products', JSON.stringify(products));
-  }
-
-  getSales() {
-    return JSON.parse(localStorage.getItem('sales')) || [];
-  }
-
-  setSales(sales) {
-    localStorage.setItem('sales', JSON.stringify(sales));
-  }
-
-  getExpenses() {
-    return JSON.parse(localStorage.getItem('expenses')) || [];
-  }
-
-  setExpenses(expenses) {
-    localStorage.setItem('expenses', JSON.stringify(expenses));
   }
 
   getUsers() {
@@ -669,7 +654,7 @@ function showAlert(message, type = 'success') {
   alert.textContent = message;
   alertBox.innerHTML = '';
   alertBox.appendChild(alert);
-  
+
   setTimeout(() => {
     alert.remove();
   }, 4000);
@@ -683,6 +668,7 @@ function clearForm(inputIds) {
 }
 
 function formatCurrency(amount) {
+  if (amount === undefined || amount === null || isNaN(amount)) amount = 0;
   return new Intl.NumberFormat('en-KE', {
     style: 'currency',
     currency: 'KES'
@@ -693,10 +679,13 @@ function formatDate(date) {
   if (typeof date === 'string') {
     date = new Date(date);
   }
+  if (!(date instanceof Date) || isNaN(date)) {
+    date = new Date();
+  }
   return date.toLocaleDateString('en-KE') + ' ' + date.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' });
 }
 
-function switchTab(tabName) {
+function switchTab(tabName, btnElement) {
   // Hide all tabs
   document.querySelectorAll('.tab-content').forEach(tab => {
     tab.classList.remove('active');
@@ -712,37 +701,55 @@ function switchTab(tabName) {
   }
 
   // Mark button as active
-  event.target.classList.add('active');
+  if (btnElement) {
+    btnElement.classList.add('active');
+  }
 
-  // Update dashboard
+  // Update dashboard if needed
   if (tabName === 'dashboard') {
     updateDashboard();
   }
 }
 
 function updateDashboard() {
-  const products = db.getProducts();
-  const sales = db.getSales();
+  let totalProducts = 0;
+  let stockValue = 0;
+  let todaySales = 0;
+  let todayProfit = 0;
 
-  // Total products
-  document.getElementById('totalProducts').textContent = products.length;
-
-  // Total stock value
-  const stockValue = products.reduce((sum, p) => sum + (p.stock * p.buy), 0);
-  document.getElementById('totalStockValue').textContent = formatCurrency(stockValue);
-
-  // Today's sales
   const today = new Date().toDateString();
-  const todaySales = sales
-    .filter(s => new Date(s.date).toDateString() === today)
-    .reduce((sum, s) => sum + s.total, 0);
-  document.getElementById('todaySales').textContent = formatCurrency(todaySales);
 
-  // Today's profit
-  const todayProfit = sales
-    .filter(s => new Date(s.date).toDateString() === today)
-    .reduce((sum, s) => sum + s.profit, 0);
-  document.getElementById('todayProfit').textContent = formatCurrency(todayProfit);
+  // PRODUCTS
+  firestoredb.collection("products").get().then(snapshot => {
+    totalProducts = snapshot.size;
+
+    snapshot.forEach(doc => {
+      const p = doc.data();
+      stockValue += (p.buy || 0) * (p.stock || 0);
+    });
+
+    document.getElementById('totalProducts').textContent = totalProducts;
+    document.getElementById('totalStockValue').textContent = formatCurrency(stockValue);
+  }).catch(err => {
+    console.error("Dashboard products error:", err);
+  });
+
+  // SALES
+  firestoredb.collection("sales").get().then(snapshot => {
+    snapshot.forEach(doc => {
+      const s = doc.data();
+      const saleDate = s.date ? new Date(s.date.toDate ? s.date.toDate() : s.date).toDateString() : '';
+      if (saleDate === today) {
+        todaySales += s.total || 0;
+        todayProfit += s.profit || 0;
+      }
+    });
+
+    document.getElementById('todaySales').textContent = formatCurrency(todaySales);
+    document.getElementById('todayProfit').textContent = formatCurrency(todayProfit);
+  }).catch(err => {
+    console.error("Dashboard sales error:", err);
+  });
 }
 
 // ============= AUTHENTICATION =============
@@ -788,104 +795,90 @@ function addProduct() {
   const sell = parseFloat(document.getElementById('sell').value);
   const stock = parseInt(document.getElementById('stock').value) || 0;
 
-  // Validation
-  if (!name) {
-    showAlert('Please enter product name', 'danger');
-    return;
-  }
-
-  if (isNaN(buy) || buy < 0) {
-    showAlert('Please enter valid buying price', 'danger');
-    return;
-  }
-
-  if (isNaN(sell) || sell < 0) {
-    showAlert('Please enter valid selling price', 'danger');
+  if (!name || isNaN(buy) || isNaN(sell)) {
+    showAlert("Fill all fields correctly", "danger");
     return;
   }
 
   if (sell < buy) {
-    showAlert('Selling price cannot be less than buying price', 'warning');
+    showAlert("Selling price cannot be less than buying price", "warning");
     return;
   }
 
-  if (isNaN(stock) || stock < 0) {
-    showAlert('Please enter valid stock quantity', 'danger');
-    return;
-  }
-
-  const products = db.getProducts();
-  const product = {
-    id: Date.now(),
+  firestoredb.collection("products").add({
     name,
     buy,
     sell,
     stock,
-    margin: ((sell - buy) / buy * 100).toFixed(2),
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  products.push(product);
-  db.setProducts(products);
-
-  clearForm(['pname', 'buy', 'sell', 'stock']);
-  loadProducts();
-  updateDashboard();
-  showAlert(`Product "${name}" added successfully!`, 'success');
+    createdAt: new Date()
+  }).then(() => {
+    showAlert("Product added successfully", "success");
+    clearForm(['pname','buy','sell','stock']);
+  }).catch(err => {
+    showAlert(err.message, "danger");
+  });
 }
 
 function loadProducts() {
-  const products = db.getProducts();
   const stockTable = document.getElementById('stockTable');
   const productSelect = document.getElementById('productSelect');
 
-  stockTable.innerHTML = `<tr>
-    <th>Name</th>
-    <th>Buy Price</th>
-    <th>Sell Price</th>
-    <th>Margin %</th>
-    <th>Stock</th>
-    <th>Stock Value</th>
-    <th>Actions</th>
-  </tr>`;
+  firestoredb.collection("products")
+    .onSnapshot(snapshot => {
+      let tableHTML = `
+        <tr>
+          <th>Name</th>
+          <th>Buy</th>
+          <th>Sell</th>
+          <th>Stock</th>
+          <th>Actions</th>
+        </tr>
+      `;
 
-  productSelect.innerHTML = '<option value="">-- Select Product --</option>';
+      let selectHTML = `<option value="">Select Product</option>`;
 
-  products.forEach((p, i) => {
-    const stockValue = p.stock * p.buy;
-    stockTable.innerHTML += `<tr>
-      <td>${p.name}</td>
-      <td>${formatCurrency(p.buy)}</td>
-      <td>${formatCurrency(p.sell)}</td>
-      <td>${p.margin}%</td>
-      <td>${p.stock}</td>
-      <td>${formatCurrency(stockValue)}</td>
-      <td>
-        <button class="action-btn edit-btn" onclick="openEditModal(${p.id})">Edit</button>
-        <button class="action-btn delete-btn" onclick="deleteProduct(${p.id})">Delete</button>
-      </td>
-    </tr>`;
+      snapshot.forEach(doc => {
+        const p = doc.data();
+        const docId = doc.id;
 
-    productSelect.innerHTML += `<option value="${i}">${p.name}</option>`;
-  });
+        tableHTML += `
+          <tr>
+            <td>${p.name || 'N/A'}</td>
+            <td>${formatCurrency(p.buy)}</td>
+            <td>${formatCurrency(p.sell)}</td>
+            <td>${p.stock || 0}</td>
+            <td>
+              <button class="action-btn edit-btn" onclick="editProduct('${docId}', '${p.name}', ${p.buy}, ${p.sell}, ${p.stock})">Edit</button>
+              <button class="action-btn delete-btn" onclick="deleteProduct('${docId}', '${p.name}')">Delete</button>
+            </td>
+          </tr>
+        `;
 
-  if (products.length === 0) {
-    stockTable.innerHTML += '<tr><td colspan="7" style="text-align: center;">No products added yet</td></tr>';
-  }
+        selectHTML += `
+          <option value="${docId}">
+            ${p.name} (Stock: ${p.stock || 0})
+          </option>
+        `;
+      });
+
+      if (snapshot.size === 0) {
+        tableHTML += '<tr><td colspan="5" style="text-align: center;">No products yet</td></tr>';
+      }
+
+      stockTable.innerHTML = tableHTML;
+      productSelect.innerHTML = selectHTML;
+    }, err => {
+      console.error("Products load error:", err);
+      showAlert("Error loading products", "danger");
+    });
 }
 
-function openEditModal(productId) {
-  const products = db.getProducts();
-  const product = products.find(p => p.id === productId);
-
-  if (!product) return;
-
-  editingProductId = productId;
-  document.getElementById('editPname').value = product.name;
-  document.getElementById('editBuy').value = product.buy;
-  document.getElementById('editSell').value = product.sell;
-  document.getElementById('editStock').value = product.stock;
+function editProduct(id, name, buy, sell, stock) {
+  editingProductId = id;
+  document.getElementById('editPname').value = name;
+  document.getElementById('editBuy').value = buy;
+  document.getElementById('editSell').value = sell;
+  document.getElementById('editStock').value = stock;
   document.getElementById('editModal').classList.add('active');
 }
 
@@ -910,35 +903,31 @@ function saveProductEdit() {
     return;
   }
 
-  const products = db.getProducts();
-  const product = products.find(p => p.id === editingProductId);
-
-  if (product) {
-    product.name = name;
-    product.buy = buy;
-    product.sell = sell;
-    product.stock = stock;
-    product.margin = ((sell - buy) / buy * 100).toFixed(2);
-    product.updatedAt = new Date();
-
-    db.setProducts(products);
-    loadProducts();
+  firestoredb.collection("products").doc(editingProductId).update({
+    name,
+    buy,
+    sell,
+    stock,
+    updatedAt: new Date()
+  }).then(() => {
     closeEditModal();
     updateDashboard();
     showAlert('Product updated successfully!', 'success');
-  }
+  }).catch(err => {
+    showAlert(err.message, 'danger');
+  });
 }
 
-function deleteProduct(productId) {
+function deleteProduct(productId, productName) {
   confirmAction = () => {
-    const products = db.getProducts();
-    const product = products.find(p => p.id === productId);
-    
-    const updatedProducts = products.filter(p => p.id !== productId);
-    db.setProducts(updatedProducts);
-    loadProducts();
-    updateDashboard();
-    showAlert(`Product "${product.name}" deleted successfully!`, 'success');
+    firestoredb.collection("products").doc(productId).delete()
+      .then(() => {
+        updateDashboard();
+        showAlert(`Product "${productName}" deleted successfully!`, 'success');
+      })
+      .catch(err => {
+        showAlert(err.message, 'danger');
+      });
   };
 
   document.getElementById('confirmMessage').textContent = 'Are you sure you want to delete this product? This action cannot be undone.';
@@ -947,181 +936,192 @@ function deleteProduct(productId) {
 
 // ============= SALES MANAGEMENT =============
 function sell() {
-  const productIndex = parseInt(document.getElementById('productSelect').value);
-  const products = db.getProducts();
-  
-  if (isNaN(productIndex) || productIndex === '') {
-    showAlert('Please select a product', 'danger');
-    return;
-  }
-
-  const product = products[productIndex];
-  if (!product) {
-    showAlert('Invalid product selected', 'danger');
-    return;
-  }
-
+  const productId = document.getElementById('productSelect').value;
   const qty = parseInt(document.getElementById('qty').value);
-  const customPrice = parseFloat(document.getElementById('customPrice').value) || product.sell;
+  const customPrice = parseFloat(document.getElementById('customPrice').value) || 0;
   const discount = parseFloat(document.getElementById('discount').value) || 0;
+  const customer = document.getElementById('customer').value.trim() || 'Walk-in';
+  const payment = document.getElementById('payment').value;
 
-  // Validation
-  if (isNaN(qty) || qty <= 0) {
-    showAlert('Please enter valid quantity', 'danger');
+  if (!productId || isNaN(qty) || qty < 1) {
+    showAlert("Please select a product and enter a valid quantity", "danger");
     return;
   }
 
-  if (qty > product.stock) {
-    showAlert(`Insufficient stock. Available: ${product.stock}`, 'danger');
-    return;
-  }
+  firestoredb.collection("products").doc(productId).get()
+    .then(doc => {
+      if (!doc.exists) {
+        showAlert("Product not found", "danger");
+        return;
+      }
 
-  if (isNaN(customPrice) || customPrice < 0) {
-    showAlert('Please enter valid price', 'danger');
-    return;
-  }
+      const p = doc.data();
 
-  if (isNaN(discount) || discount < 0) {
-    showAlert('Please enter valid discount', 'danger');
-    return;
-  }
+      if (qty > p.stock) {
+        showAlert(`Not enough stock. Available: ${p.stock}`, "danger");
+        return;
+      }
 
-  const subtotal = customPrice * qty;
-  const total = Math.max(subtotal - discount, 0); // Total cannot be negative
-  const profit = (customPrice - product.buy) * qty;
+      const unitPrice = customPrice > 0 ? customPrice : p.sell;
+      const subtotal = unitPrice * qty;
+      const total = subtotal - discount;
+      const profit = (unitPrice - p.buy) * qty - discount;
 
-  // Create sale record
-  const sale = {
-    id: Date.now(),
-    product: product.name,
-    productId: product.id,
-    qty,
-    unitPrice: customPrice,
-    subtotal,
-    discount,
-    total,
-    profit,
-    payment: document.getElementById('payment').value,
-    customer: document.getElementById('customer').value.trim() || 'Walk-in',
-    date: new Date(),
-    userId: currentUser.id
-  };
+      const sale = {
+        product: p.name,
+        productId,
+        qty,
+        unitPrice,
+        subtotal,
+        discount,
+        total,
+        profit,
+        payment,
+        customer,
+        date: new Date()
+      };
 
-  // Update product stock
-  product.stock -= qty;
-  db.setProducts(products);
+      // Save sale
+      firestoredb.collection("sales").add(sale)
+        .then(() => {
+          // Update stock
+          firestoredb.collection("products").doc(productId).update({
+            stock: p.stock - qty
+          });
 
-  // Save sale
-  const sales = db.getSales();
-  sales.push(sale);
-  db.setSales(sales);
+          // Show receipt
+          generateReceipt(sale);
 
-  // Generate receipt
-  generateReceipt(sale);
-
-  // Clear form
-  clearForm(['qty', 'customPrice', 'discount', 'customer']);
-  document.getElementById('productSelect').value = '';
-  document.getElementById('discount').value = '0';
-
-  loadProducts();
-  loadRecentSales();
-  updateDashboard();
-  showAlert('Sale recorded successfully!', 'success');
+          showAlert("Sale completed successfully!", "success");
+          clearForm(['qty', 'customPrice', 'discount', 'customer']);
+          document.getElementById('productSelect').value = '';
+          updateDashboard();
+        })
+        .catch(err => {
+          showAlert(err.message, "danger");
+        });
+    })
+    .catch(err => {
+      showAlert(err.message, "danger");
+    });
 }
 
 function generateReceipt(sale) {
   const receiptHTML = `
-╔════════════════════════════════╗
-║    EDDMOBI POS RECEIPT         ║
-║    📞 0722540912               ║
-╚════════════════════════════════╝
+╔════════════════════════════════════════╗
+║         EDDMOBI POS RECEIPT            ║
+╚════════════════════════════════════════╝
 
-Customer:  ${sale.customer}
-Date:      ${formatDate(sale.date)}
-───────────────────────────────
+Date: ${formatDate(sale.date)}
+Customer: ${sale.customer}
+Payment: ${sale.payment}
 
-Product:   ${sale.product}
-Qty:       ${sale.qty}
-Unit Price: ${formatCurrency(sale.unitPrice)}
-Subtotal:  ${formatCurrency(sale.subtotal)}
-Discount:  ${formatCurrency(sale.discount)}
-───────────────────────────────
-TOTAL:     ${formatCurrency(sale.total)}
-Profit:    ${formatCurrency(sale.profit)}
-───────────────────────────────
-Payment:   ${sale.payment}
+────────────────────────────────────────
+Product: ${sale.product}
+Qty: ${sale.qty} x ${formatCurrency(sale.unitPrice)}
+Subtotal: ${formatCurrency(sale.subtotal)}
+${sale.discount > 0 ? 'Discount: -' + formatCurrency(sale.discount) + '\n' : ''}
+────────────────────────────────────────
+TOTAL: ${formatCurrency(sale.total)}
+────────────────────────────────────────
 
-═══════════════════════════════
 Thank you for your business!
-═══════════════════════════════
+📞 0722540912
 `;
 
   document.getElementById('receipt').textContent = receiptHTML;
-  document.getElementById('receipt').style.display = 'block';
 }
 
 function loadRecentSales() {
-  const sales = db.getSales();
-  const recentSalesTable = document.getElementById('recentSalesTable');
+  const table = document.getElementById('recentSalesTable');
 
-  recentSalesTable.innerHTML = `<tr>
-    <th>Date</th>
-    <th>Product</th>
-    <th>Qty</th>
-    <th>Price</th>
-    <th>Discount</th>
-    <th>Total</th>
-    <th>Profit</th>
-    <th>Payment</th>
-    <th>Customer</th>
-    <th>Action</th>
-  </tr>`;
+  table.innerHTML = `
+    <tr>
+      <th>Date</th>
+      <th>Product</th>
+      <th>Qty</th>
+      <th>Total</th>
+      <th>Action</th>
+    </tr>
+  `;
 
-  const sortedSales = sales.slice().reverse().slice(0, 20); // Last 20 sales
+  firestoredb.collection("sales")
+    .orderBy("date", "desc")
+    .limit(20)
+    .onSnapshot(snapshot => {
+      let html = `
+        <tr>
+          <th>Date</th>
+          <th>Product</th>
+          <th>Qty</th>
+          <th>Total</th>
+          <th>Action</th>
+        </tr>
+      `;
 
-  sortedSales.forEach(s => {
-    recentSalesTable.innerHTML += `<tr>
-      <td>${formatDate(s.date)}</td>
-      <td>${s.product}</td>
-      <td>${s.qty}</td>
-      <td>${formatCurrency(s.unitPrice)}</td>
-      <td>${formatCurrency(s.discount)}</td>
-      <td>${formatCurrency(s.total)}</td>
-      <td>${formatCurrency(s.profit)}</td>
-      <td>${s.payment}</td>
-      <td>${s.customer}</td>
-      <td><button class="action-btn delete-btn" onclick="deleteSale(${s.id})">Delete</button></td>
-    </tr>`;
-  });
+      if (snapshot.size === 0) {
+        html += '<tr><td colspan="5" style="text-align: center;">No sales yet</td></tr>';
+      } else {
+        snapshot.forEach(doc => {
+          const s = doc.data();
+          const docId = doc.id;
+          const dateStr = s.date ? formatDate(s.date.toDate ? s.date.toDate() : s.date) : 'N/A';
 
-  if (sales.length === 0) {
-    recentSalesTable.innerHTML += '<tr><td colspan="10" style="text-align: center;">No sales recorded yet</td></tr>';
-  }
-}
-
-function deleteSale(saleId) {
-  confirmAction = () => {
-    const sales = db.getSales();
-    const sale = sales.find(s => s.id === saleId);
-    
-    if (sale) {
-      // Restore stock
-      const products = db.getProducts();
-      const product = products.find(p => p.id === sale.productId);
-      if (product) {
-        product.stock += sale.qty;
-        db.setProducts(products);
+          html += `
+            <tr>
+              <td>${dateStr}</td>
+              <td>${s.product || 'N/A'}</td>
+              <td>${s.qty || 0}</td>
+              <td>${formatCurrency(s.total)}</td>
+              <td><button class="action-btn delete-btn" onclick="deleteSale('${docId}', '${s.productId}', ${s.qty || 0})">Delete</button></td>
+            </tr>
+          `;
+        });
       }
 
-      // Remove sale
-      const updatedSales = sales.filter(s => s.id !== saleId);
-      db.setSales(updatedSales);
-      
-      loadRecentSales();
-      loadProducts();
-      updateDashboard();
-      showAlert('Sale deleted and stock restored', 'success');
+      table.innerHTML = html;
+    }, err => {
+      console.error("Sales load error:", err);
+    });
+}
+
+function deleteSale(saleId, productId, qty) {
+  confirmAction = () => {
+    // First restore stock if product exists
+    if (productId && qty > 0) {
+      firestoredb.collection("products").doc(productId).get()
+        .then(doc => {
+          if (doc.exists) {
+            const currentStock = doc.data().stock || 0;
+            return firestoredb.collection("products").doc(productId).update({
+              stock: currentStock + qty
+            });
+          }
+        })
+        .then(() => {
+          // Delete the sale
+          return firestoredb.collection("sales").doc(saleId).delete();
+        })
+        .then(() => {
+          loadRecentSales();
+          loadProducts();
+          updateDashboard();
+          showAlert('Sale deleted and stock restored', 'success');
+        })
+        .catch(err => {
+          showAlert(err.message, 'danger');
+        });
+    } else {
+      // Just delete the sale without restoring stock
+      firestoredb.collection("sales").doc(saleId).delete()
+        .then(() => {
+          loadRecentSales();
+          updateDashboard();
+          showAlert('Sale deleted', 'success');
+        })
+        .catch(err => {
+          showAlert(err.message, 'danger');
+        });
     }
   };
 
@@ -1145,58 +1145,80 @@ function addExpense() {
   }
 
   const expense = {
-    id: Date.now(),
     name,
     amount,
     date: new Date(),
-    userId: currentUser.id
+    userId: currentUser ? currentUser.id : null
   };
 
-  const expenses = db.getExpenses();
-  expenses.push(expense);
-  db.setExpenses(expenses);
-
-  clearForm(['expenseName', 'expenseAmount']);
-  loadExpenses();
-  updateDashboard();
-  showAlert('Expense recorded successfully!', 'success');
+  firestoredb.collection("expenses").add(expense)
+    .then(() => {
+      clearForm(['expenseName', 'expenseAmount']);
+      showAlert('Expense recorded successfully!', 'success');
+    })
+    .catch(err => {
+      showAlert(err.message, 'danger');
+    });
 }
 
 function loadExpenses() {
-  const expenses = db.getExpenses();
   const expensesTable = document.getElementById('expensesTable');
 
-  expensesTable.innerHTML = `<tr>
-    <th>Date</th>
-    <th>Description</th>
-    <th>Amount</th>
-    <th>Action</th>
-  </tr>`;
+  expensesTable.innerHTML = `
+    <tr>
+      <th>Date</th>
+      <th>Description</th>
+      <th>Amount</th>
+      <th>Action</th>
+    </tr>
+  `;
 
-  const sortedExpenses = expenses.slice().reverse();
+  firestoredb.collection("expenses")
+    .orderBy("date", "desc")
+    .onSnapshot(snapshot => {
+      let html = `
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Amount</th>
+          <th>Action</th>
+        </tr>
+      `;
 
-  sortedExpenses.forEach(e => {
-    expensesTable.innerHTML += `<tr>
-      <td>${formatDate(e.date)}</td>
-      <td>${e.name}</td>
-      <td>${formatCurrency(e.amount)}</td>
-      <td><button class="action-btn delete-btn" onclick="deleteExpense(${e.id})">Delete</button></td>
-    </tr>`;
-  });
+      if (snapshot.size === 0) {
+        html += '<tr><td colspan="4" style="text-align: center;">No expenses recorded yet</td></tr>';
+      } else {
+        snapshot.forEach(doc => {
+          const e = doc.data();
+          const docId = doc.id;
+          const dateStr = e.date ? formatDate(e.date.toDate ? e.date.toDate() : e.date) : 'N/A';
 
-  if (expenses.length === 0) {
-    expensesTable.innerHTML += '<tr><td colspan="4" style="text-align: center;">No expenses recorded yet</td></tr>';
-  }
+          html += `
+            <tr>
+              <td>${dateStr}</td>
+              <td>${e.name || 'N/A'}</td>
+              <td>${formatCurrency(e.amount)}</td>
+              <td><button class="action-btn delete-btn" onclick="deleteExpense('${docId}')">Delete</button></td>
+            </tr>
+          `;
+        });
+      }
+
+      expensesTable.innerHTML = html;
+    }, err => {
+      console.error("Expenses load error:", err);
+    });
 }
 
 function deleteExpense(expenseId) {
   confirmAction = () => {
-    const expenses = db.getExpenses();
-    const updatedExpenses = expenses.filter(e => e.id !== expenseId);
-    db.setExpenses(updatedExpenses);
-    loadExpenses();
-    updateDashboard();
-    showAlert('Expense deleted successfully!', 'success');
+    firestoredb.collection("expenses").doc(expenseId).delete()
+      .then(() => {
+        showAlert('Expense deleted successfully!', 'success');
+      })
+      .catch(err => {
+        showAlert(err.message, 'danger');
+      });
   };
 
   document.getElementById('confirmMessage').textContent = 'Are you sure you want to delete this expense?';
@@ -1206,40 +1228,40 @@ function deleteExpense(expenseId) {
 // ============= REPORTS =============
 function generateDailyReport() {
   const today = new Date().toDateString();
-  const sales = db.getSales().filter(s => new Date(s.date).toDateString() === today);
-  const expenses = db.getExpenses().filter(e => new Date(e.date).toDateString() === today);
 
-  const totalSales = sales.reduce((sum, s) => sum + s.total, 0);
-  const totalProfit = sales.reduce((sum, s) => sum + s.profit, 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const netProfit = totalProfit - totalExpenses;
+  firestoredb.collection("sales").get().then(snapshot => {
+    let totalSales = 0;
+    let totalProfit = 0;
+    let count = 0;
 
-  const report = `
+    snapshot.forEach(doc => {
+      const s = doc.data();
+      const saleDate = s.date ? new Date(s.date.toDate ? s.date.toDate() : s.date).toDateString() : '';
+      if (saleDate === today) {
+        totalSales += s.total || 0;
+        totalProfit += s.profit || 0;
+        count++;
+      }
+    });
+
+    const report = `
 ╔════════════════════════════════════════╗
-║        DAILY REPORT - ${new Date().toLocaleDateString('en-KE')}          ║
+║         DAILY REPORT                   ║
 ╚════════════════════════════════════════╝
+Date: ${new Date().toLocaleDateString('en-KE')}
 
-SALES SUMMARY:
-──────────────────────────────────────
-Total Transactions:  ${sales.length}
-Total Sales:         ${formatCurrency(totalSales)}
-Gross Profit:        ${formatCurrency(totalProfit)}
+Transactions: ${count}
+Total Sales: ${formatCurrency(totalSales)}
+Profit: ${formatCurrency(totalProfit)}
 
-EXPENSES:
-──────────────────────────────────────
-Total Expenses:      ${formatCurrency(totalExpenses)}
-
-NET PROFIT:
-══════════════════════════════════════
-Net Profit:          ${formatCurrency(netProfit)}
-══════════════════════════════════════
-
-Prepared by: ${currentUser.user}
-Report generated: ${formatDate(new Date())}
+Prepared by: ${currentUser ? currentUser.user : 'Admin'}
 `;
 
-  document.getElementById('output').textContent = report;
-  showAlert('Daily report generated', 'success');
+    document.getElementById('output').textContent = report;
+    showAlert('Daily report generated', 'success');
+  }).catch(err => {
+    showAlert(err.message, 'danger');
+  });
 }
 
 function generateMonthlyReport() {
@@ -1247,34 +1269,47 @@ function generateMonthlyReport() {
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
 
-  const sales = db.getSales().filter(s => {
-    const saleDate = new Date(s.date);
-    return saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear;
-  });
+  Promise.all([
+    firestoredb.collection("sales").get(),
+    firestoredb.collection("expenses").get()
+  ]).then(([salesSnapshot, expensesSnapshot]) => {
+    let totalSales = 0;
+    let totalProfit = 0;
+    let salesCount = 0;
 
-  const expenses = db.getExpenses().filter(e => {
-    const expenseDate = new Date(e.date);
-    return expenseDate.getMonth() === currentMonth && expenseDate.getFullYear() === currentYear;
-  });
+    salesSnapshot.forEach(doc => {
+      const s = doc.data();
+      const saleDate = s.date ? new Date(s.date.toDate ? s.date.toDate() : s.date) : null;
+      if (saleDate && saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear) {
+        totalSales += s.total || 0;
+        totalProfit += s.profit || 0;
+        salesCount++;
+      }
+    });
 
-  const totalSales = sales.reduce((sum, s) => sum + s.total, 0);
-  const totalProfit = sales.reduce((sum, s) => sum + s.profit, 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const netProfit = totalProfit - totalExpenses;
+    let totalExpenses = 0;
+    expensesSnapshot.forEach(doc => {
+      const e = doc.data();
+      const expenseDate = e.date ? new Date(e.date.toDate ? e.date.toDate() : e.date) : null;
+      if (expenseDate && expenseDate.getMonth() === currentMonth && expenseDate.getFullYear() === currentYear) {
+        totalExpenses += e.amount || 0;
+      }
+    });
 
-  const monthName = new Date(currentYear, currentMonth).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
+    const netProfit = totalProfit - totalExpenses;
+    const monthName = new Date(currentYear, currentMonth).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
 
-  const report = `
+    const report = `
 ╔════════════════════════════════════════╗
 ║        MONTHLY REPORT - ${monthName}      ║
 ╚════════════════════════════════════════╝
 
 SALES SUMMARY:
 ──────────────────────────────────────
-Total Transactions:  ${sales.length}
+Total Transactions:  ${salesCount}
 Total Sales:         ${formatCurrency(totalSales)}
 Gross Profit:        ${formatCurrency(totalProfit)}
-Avg Transaction:     ${sales.length > 0 ? formatCurrency(totalSales / sales.length) : 'N/A'}
+Avg Transaction:     ${salesCount > 0 ? formatCurrency(totalSales / salesCount) : 'N/A'}
 
 EXPENSES:
 ──────────────────────────────────────
@@ -1285,44 +1320,61 @@ NET PROFIT:
 Net Profit:          ${formatCurrency(netProfit)}
 ══════════════════════════════════════
 
-Prepared by: ${currentUser.user}
+Prepared by: ${currentUser ? currentUser.user : 'Admin'}
 Report generated: ${formatDate(new Date())}
 `;
 
-  document.getElementById('output').textContent = report;
-  showAlert('Monthly report generated', 'success');
+    document.getElementById('output').textContent = report;
+    showAlert('Monthly report generated', 'success');
+  }).catch(err => {
+    showAlert(err.message, 'danger');
+  });
 }
 
 function generateAnnualReport() {
   const now = new Date();
   const currentYear = now.getFullYear();
 
-  const sales = db.getSales().filter(s => {
-    const saleDate = new Date(s.date);
-    return saleDate.getFullYear() === currentYear;
-  });
+  Promise.all([
+    firestoredb.collection("sales").get(),
+    firestoredb.collection("expenses").get()
+  ]).then(([salesSnapshot, expensesSnapshot]) => {
+    let totalSales = 0;
+    let totalProfit = 0;
+    let salesCount = 0;
 
-  const expenses = db.getExpenses().filter(e => {
-    const expenseDate = new Date(e.date);
-    return expenseDate.getFullYear() === currentYear;
-  });
+    salesSnapshot.forEach(doc => {
+      const s = doc.data();
+      const saleDate = s.date ? new Date(s.date.toDate ? s.date.toDate() : s.date) : null;
+      if (saleDate && saleDate.getFullYear() === currentYear) {
+        totalSales += s.total || 0;
+        totalProfit += s.profit || 0;
+        salesCount++;
+      }
+    });
 
-  const totalSales = sales.reduce((sum, s) => sum + s.total, 0);
-  const totalProfit = sales.reduce((sum, s) => sum + s.profit, 0);
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const netProfit = totalProfit - totalExpenses;
+    let totalExpenses = 0;
+    expensesSnapshot.forEach(doc => {
+      const e = doc.data();
+      const expenseDate = e.date ? new Date(e.date.toDate ? e.date.toDate() : e.date) : null;
+      if (expenseDate && expenseDate.getFullYear() === currentYear) {
+        totalExpenses += e.amount || 0;
+      }
+    });
 
-  const report = `
+    const netProfit = totalProfit - totalExpenses;
+
+    const report = `
 ╔════════════════════════════════════════╗
 ║        ANNUAL REPORT - ${currentYear}          ║
 ╚════════════════════════════════════════╝
 
 SALES SUMMARY:
 ──────────────────────────────────────
-Total Transactions:  ${sales.length}
+Total Transactions:  ${salesCount}
 Total Sales:         ${formatCurrency(totalSales)}
 Gross Profit:        ${formatCurrency(totalProfit)}
-Avg Transaction:     ${sales.length > 0 ? formatCurrency(totalSales / sales.length) : 'N/A'}
+Avg Transaction:     ${salesCount > 0 ? formatCurrency(totalSales / salesCount) : 'N/A'}
 
 EXPENSES:
 ──────────────────────────────────────
@@ -1333,43 +1385,54 @@ NET PROFIT:
 Net Profit:          ${formatCurrency(netProfit)}
 ══════════════════════════════════════
 
-Prepared by: ${currentUser.user}
+Prepared by: ${currentUser ? currentUser.user : 'Admin'}
 Report generated: ${formatDate(new Date())}
 `;
 
-  document.getElementById('output').textContent = report;
-  showAlert('Annual report generated', 'success');
+    document.getElementById('output').textContent = report;
+    showAlert('Annual report generated', 'success');
+  }).catch(err => {
+    showAlert(err.message, 'danger');
+  });
 }
 
 function exportToCSV() {
-  const sales = db.getSales();
-  const expenses = db.getExpenses();
+  Promise.all([
+    firestoredb.collection("sales").get(),
+    firestoredb.collection("expenses").get()
+  ]).then(([salesSnapshot, expensesSnapshot]) => {
+    let csv = 'EDDMOBI POS - DATA EXPORT\n\n';
 
-  let csv = 'EDDMOBI POS - DATA EXPORT\n\n';
+    // Sales data
+    csv += 'SALES DATA\n';
+    csv += 'Date,Product,Quantity,Unit Price,Subtotal,Discount,Total,Profit,Payment,Customer\n';
+    salesSnapshot.forEach(doc => {
+      const s = doc.data();
+      const dateStr = s.date ? formatDate(s.date.toDate ? s.date.toDate() : s.date) : '';
+      csv += `"${dateStr}","${s.product || ''}",${s.qty || 0},${s.unitPrice || 0},${s.subtotal || 0},${s.discount || 0},${s.total || 0},${s.profit || 0},"${s.payment || ''}","${s.customer || ''}"\n`;
+    });
 
-  // Sales data
-  csv += 'SALES DATA\n';
-  csv += 'Date,Product,Quantity,Unit Price,Subtotal,Discount,Total,Profit,Payment,Customer\n';
-  sales.forEach(s => {
-    csv += `"${formatDate(s.date)}","${s.product}",${s.qty},${s.unitPrice},${s.subtotal},${s.discount},${s.total},${s.profit},"${s.payment}","${s.customer}"\n`;
+    csv += '\n\nEXPENSE DATA\n';
+    csv += 'Date,Description,Amount\n';
+    expensesSnapshot.forEach(doc => {
+      const e = doc.data();
+      const dateStr = e.date ? formatDate(e.date.toDate ? e.date.toDate() : e.date) : '';
+      csv += `"${dateStr}","${e.name || ''}",${e.amount || 0}\n`;
+    });
+
+    // Download CSV
+    const element = document.createElement('a');
+    element.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv));
+    element.setAttribute('download', `eddmobi_export_${new Date().getTime()}.csv`);
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+
+    showAlert('Data exported to CSV successfully!', 'success');
+  }).catch(err => {
+    showAlert(err.message, 'danger');
   });
-
-  csv += '\n\nEXPENSE DATA\n';
-  csv += 'Date,Description,Amount\n';
-  expenses.forEach(e => {
-    csv += `"${formatDate(e.date)}","${e.name}",${e.amount}\n`;
-  });
-
-  // Download CSV
-  const element = document.createElement('a');
-  element.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv));
-  element.setAttribute('download', `eddmobi_export_${new Date().getTime()}.csv`);
-  element.style.display = 'none';
-  document.body.appendChild(element);
-  element.click();
-  document.body.removeChild(element);
-
-  showAlert('Data exported to CSV successfully!', 'success');
 }
 
 // ============= MODAL FUNCTIONS =============
@@ -1393,9 +1456,17 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', () => {
-  db.initializeData();
+// Close modals on background click
+document.getElementById('confirmModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('confirmModal')) {
+    cancelConfirm();
+  }
+});
+
+document.getElementById('editModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('editModal')) {
+    closeEditModal();
+  }
 });
 </script>
 
